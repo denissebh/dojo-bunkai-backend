@@ -70,18 +70,28 @@ router.put('/:id', async (req, res) => {
     return res.status(400).json({ error: 'Estado de pago inválido.' });
   }
 
-  try {
-    const result = await pool.query(
-      'UPDATE Pagos SET estatus_pago = $1 WHERE id = $2 RETURNING *',
-      [estatus_pago, id]
-    );
+  try {    
+
+    let updateQuery = 'UPDATE Pagos SET estatus_pago = $1';
+    const queryParams = [estatus_pago];
+    
+    if (estatus_pago === 'Pagado') {
+      updateQuery += ', fecha_pago = NOW()';
+    }
+    
+    updateQuery += ' WHERE id = $2 RETURNING *';
+    queryParams.push(id); 
+
+    const result = await pool.query(updateQuery, queryParams);
+
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Pago no encontrado.' });
     }
     
     const updatedPayment = result.rows[0];
 
-    // Si se marca como "Pagado" (pago exitoso), notifica al alumno.
+
     if (updatedPayment.estatus_pago === 'Pagado') {
       await sendNotification(updatedPayment.id_usuario, 
         `¡Tu pago de "${updatedPayment.concepto}" ha sido confirmado! Gracias.`
@@ -94,7 +104,6 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
-
 // --- ELIMINAR UN PAGO (DELETE /:id) ---
 router.delete('/:id', async (req, res) => {
 

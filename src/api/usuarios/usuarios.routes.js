@@ -6,7 +6,7 @@ const checkAuth = require('../../middleware/checkAuth');
 const router = Router();
 
 // --- CREAR UN NUEVO USUARIO ---
-router.post('/', checkAuth, async (req, res) => {
+router.post('/', async (req, res) => {
   
  
   const { nombre, apellido_paterno, apellido_materno, correo_electronico, password, rol, grado, edad, curp, telefono, fecha_nacimiento } = req.body;
@@ -93,7 +93,7 @@ router.put('/:id', checkAuth, async (req, res) => {
         apellido_materno, 
         correo_electronico, 
         telefono, 
-        curp, 
+        curp|| null, 
         fecha_nacimiento || null, 
         grupo_sanguineo, 
         alergias, 
@@ -154,7 +154,13 @@ router.get('/:id/profile', checkAuth, async (req, res) => {
     const userData = userResult.rows[0];
 
     // Obtener historial de pagos 
-    const paymentsResult = await pool.query('SELECT id, concepto, fecha_pago, fecha_vencimiento, estatus_pago, tipo_pago FROM Pagos WHERE id_usuario = $1 ORDER BY fecha_vencimiento DESC', [id]);
+    const paymentsResult = await pool.query(
+      `SELECT id, concepto, monto, fecha_pago, fecha_vencimiento, estatus_pago, tipo_pago 
+       FROM Pagos 
+       WHERE id_usuario = $1 
+       ORDER BY fecha_vencimiento DESC`, 
+      [id]
+    );
     userData.pagos = paymentsResult.rows;
 
     // Obtener historial de eventos deportivos 
