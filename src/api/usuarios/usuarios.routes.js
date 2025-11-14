@@ -8,20 +8,40 @@ const router = Router();
 // --- CREAR UN NUEVO USUARIO ---
 router.post('/', async (req, res) => {
   
- 
-  const { nombre, apellido_paterno, apellido_materno, correo_electronico, password, rol, grado, edad, curp, telefono, fecha_nacimiento } = req.body;
+
+  const { 
+    nombre, apellido_paterno, apellido_materno, correo_electronico, password, 
+    rol, grado, edad, curp, telefono, fecha_nacimiento,
+    grupo_sanguineo, alergias 
+  } = req.body;
   
-  const passwordToHash = password || 'dojo2025'; // Contraseña por defecto
+  const passwordToHash = password || 'dojo2025'; 
 
   try {
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(passwordToHash, salt);
 
+    // 2. Actualizamos la consulta INSERT para incluir los nuevos campos
     const result = await pool.query(
       `INSERT INTO Usuarios 
-         (nombre, apellido_paterno, apellido_materno, correo_electronico, password_hash, rol, grado, edad, curp, telefono, fecha_nacimiento) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`, 
-      [nombre, apellido_paterno || 'N/A', apellido_materno, correo_electronico, password_hash, rol || 'Profesor', grado, edad, curp, telefono, fecha_nacimiento] // Añadido apellido_materno
+         (nombre, apellido_paterno, apellido_materno, correo_electronico, password_hash, rol, grado, edad, curp, telefono, fecha_nacimiento, grupo_sanguineo, alergias) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+       RETURNING *`, 
+      [
+        nombre, 
+        apellido_paterno || 'N/A', 
+        apellido_materno, 
+        correo_electronico, 
+        password_hash, 
+        rol || 'Profesor', 
+        grado, 
+        edad, 
+        curp, 
+        telefono, 
+        fecha_nacimiento,
+        grupo_sanguineo, // $12
+        alergias         // $13
+      ] 
     );
 
     const newUser = result.rows[0];
@@ -164,7 +184,7 @@ router.get('/:id/profile', checkAuth, async (req, res) => {
     userData.pagos = paymentsResult.rows;
 
     // Obtener historial de eventos deportivos 
-    const eventsResult = await pool.query('SELECT id, tipo_evento, descripcion, categoria, fecha, resultado FROM Eventos_Deportivos WHERE id_usuario = $1 ORDER BY fecha DESC', [id]);
+    const eventsResult = await pool.query('SELECT id, tipo_evento, descripcion, categoria, fecha, resultado, ponente, puntuacion FROM Eventos_Deportivos WHERE id_usuario = $1 ORDER BY fecha DESC', [id]);
     // Separamos los eventos 
     userData.examenes = eventsResult.rows.filter(e => e.tipo_evento === 'Examen');
     userData.torneos = eventsResult.rows.filter(e => e.tipo_evento === 'Torneo');
