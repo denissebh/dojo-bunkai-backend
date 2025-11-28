@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const iniciarCronJobs = require('./src/cronJobs');
 
 const usuarioRoutes = require('./src/api/usuarios/usuarios.routes.js');
 const pagosRoutes = require('./src/api/pagos/pagos.routes.js');
@@ -28,7 +29,8 @@ app.use('/api/actividades', actividadesRoutes);
 app.use('/api/notificaciones', notificacionesRoutes);
 app.use('/api/comunicados', comunicadosRoutes);
 
-// Iniciar el servidor
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+  iniciarCronJobs();
 });

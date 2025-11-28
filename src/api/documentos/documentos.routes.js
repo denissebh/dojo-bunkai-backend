@@ -1,13 +1,13 @@
 const { Router } = require('express');
 const pool = require('../../db');
 const multer = require('multer');
-const AWS = require('aws-sdk'); // Importamos el SDK de AWS
+const AWS = require('aws-sdk'); 
 const checkAuth = require('../../middleware/checkAuth'); 
+const { sendEmail } = require('../../utils/emailSender')
 
 const router = Router();
 
 // --- Configuración de AWS S3 ---
-// Creamos una instancia de S3. Automáticamente leerá las variables de .env
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -18,35 +18,48 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 /**
  * Función "helper" para subir un archivo a S3
- * @param {object} file - El archivo de multer (req.file)
- * @param {number} userId - El ID del usuario (para organizar la carpeta)
- * @returns {Promise<object>} - La respuesta de S3 (incluye .Location)
  */
 const uploadToS3 = (file, userId, fileType) => {
   const bucketName = process.env.AWS_BUCKET_NAME;
-
-  // Creamos un nombre de archivo único para S3
-  // Ej: renade/1007/foto_167888654.jpg
   const key = `renade/${userId}/${fileType}_${Date.now()}_${file.originalname}`;
 
   const params = {
     Bucket: bucketName,
     Key: key,
-    Body: file.buffer,        // El archivo en sí
-    ContentType: file.mimetype, // El tipo de archivo (ej. image/jpeg)
-           
+    Body: file.buffer,
+    ContentType: file.mimetype,
+    
   };
 
-  //  Subimos el archivo y devolvemos la promesa
   return s3.upload(params).promise();
 };
 
-// --- SUBIR DOCUMENTOS DE RENADE ---
-//  Añadimos checkAuth para obtener el ID del usuario del token
-router.post('/renade', checkAuth, upload.fields([{ name: 'foto', maxCount: 1 }, { name: 'curp', maxCount: 1 }]), async (req, res) => {
-  
-  const { id: id_usuario } = req.userData;
+// --- CONSULTAR ESTATUS (Para el Alumno) ---
+router.get('/renade/mis-documentos', checkAuth, async (req, res) => {
+  const { id } = req.userData; 
+  try {
+    const result = await pool.query(
+      `SELECT * FROM Documentos_RENADE 
+       WHERE id_usuario = $1 
+       ORDER BY fecha_subida DESC LIMIT 1`,
+      [id]
+    );
 
+    if (result.rows.length === 0) {
+      return res.json({ estatus_validacion: 'Sin enviar' });
+    }
+
+    res.json(result.rows[0]);
+
+  } catch (error) {
+    console.error('Error al consultar estatus:', error);
+    res.status(500).json({ error: 'Error interno.' });
+  }
+});
+
+// --- SUBIR DOCUMENTOS DE RENADE ---
+router.post('/renade', checkAuth, upload.fields([{ name: 'foto', maxCount: 1 }, { name: 'curp', maxCount: 1 }]), async (req, res) => {
+  const { id: id_usuario } = req.userData;
   const fotoFile = req.files.foto ? req.files.foto[0] : null;
   const curpFile = req.files.curp ? req.files.curp[0] : null;
 
@@ -55,19 +68,14 @@ router.post('/renade', checkAuth, upload.fields([{ name: 'foto', maxCount: 1 }, 
   }
 
   try {
-    //  Subimos ambos archivos a S3 en paralelo 
     const [fotoData, curpData] = await Promise.all([
       uploadToS3(fotoFile, id_usuario, 'foto'),
       uploadToS3(curpFile, id_usuario, 'curp')
     ]);
 
-    //  Obtenemos las URLs públicas reales de S3
     const fotoDataLocation = fotoData.Location;
     const curpDataLocation = curpData.Location;
 
-    console.log('Archivos subidos a S3. URLs generadas:', { fotoDataLocation, curpDataLocation });
-
-    //  Guardamos las URLs reales en la base de datos 
     const result = await pool.query(
       `INSERT INTO Documentos_RENADE (id_usuario, url_foto, url_curp, estatus_validacion) 
        VALUES ($1, $2, $3, 'Pendiente') RETURNING *`,
@@ -81,7 +89,71 @@ router.post('/renade', checkAuth, upload.fields([{ name: 'foto', maxCount: 1 }, 
   }
 });
 
-// --- OBTENER SOLICITUDES RENADE PENDIENTES (GET /renade/pendientes) ---
+// --- ADMIN: VALIDAR O RECHAZAR  ---
+router.put('/renade/:id', checkAuth, async (req, res) => {
+  const { id } = req.params;
+  const { nuevoEstado, motivoRechazo } = req.body; 
+
+  try {
+    const result = await pool.query(
+      `UPDATE Documentos_RENADE 
+       SET estatus_validacion = $1, fecha_validacion = NOW(), motivo_rechazo = $2
+       WHERE id = $3 
+       RETURNING *`,
+      [nuevoEstado, motivoRechazo || null, id] 
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'No encontrado' });
+    
+    const solicitud = result.rows[0];
+
+    // --- LÓGICA DE CORREO REFACTORIZADA ---
+    try {
+        // 1. Buscamos datos del alumno
+        const userRes = await pool.query('SELECT nombre, correo_electronico FROM Usuarios WHERE id = $1', [solicitud.id_usuario]);
+        
+        if (userRes.rows.length > 0) {
+            const alumno = userRes.rows[0];
+            let asunto = `Actualización RENADE - ${nuevoEstado}`;
+            let mensajeHTML = '';
+
+            if (nuevoEstado === 'Validado') {
+                mensajeHTML = `
+                    <div style="font-family: Arial; padding: 20px; border: 1px solid #4caf50; border-radius: 8px;">
+                        <h2 style="color: #2e7d32;">¡Felicidades ${alumno.nombre}!</h2>
+                        <p>Tus documentos RENADE han sido <b>VALIDADOS</b> correctamente en Dojo Bunkai.</p>
+                        <p>Por favor continua con tu tramite en la pagina de la FEMEKA para obtener tu RENADE.</p>
+                    </div>
+                `;
+            } else {
+                mensajeHTML = `
+                    <div style="font-family: Arial; padding: 20px; border: 1px solid #f44336; border-radius: 8px;">
+                        <h2 style="color: #c62828;">Solicitud Rechazada</h2>
+                        <p>Hola ${alumno.nombre},</p>
+                        <p>Tu solicitud RENADE ha sido rechazada por el siguiente motivo:</p>
+                        <blockquote style="background: #ffebee; padding: 10px;">${motivoRechazo}</blockquote>
+                        <p>Por favor, ingresa a la plataforma y sube tus documentos nuevamente.</p>
+                    </div>
+                `;
+            }
+
+            // 2. Usamos la utilidad centralizada
+            sendEmail(alumno.correo_electronico, asunto, mensajeHTML);
+        }
+    } catch (mailError) {
+        console.error("Error enviando notificación RENADE:", mailError);
+        // No detenemos la respuesta si falla el correo
+    }
+    // -------------------------------------
+
+    res.json(result.rows[0]);
+
+  } catch (error) {
+    console.error('Error validando:', error);
+    res.status(500).json({ error: 'Error interno.' });
+  }
+});
+// --- OBTENER SOLICITUDES RENADE PENDIENTES ---
 router.get('/renade/pendientes', checkAuth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -96,57 +168,6 @@ router.get('/renade/pendientes', checkAuth, async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Error al obtener solicitudes RENADE pendientes:', error);
-    res.status(500).json({ error: 'Error interno del servidor' });
-  }
-});
-
-// --- ACTUALIZAR ESTADO DE SOLICITUD RENADE (PUT /renade/:id) ---
-router.put('/renade/:id', checkAuth, async (req, res) => {
-  const { id } = req.params;
-  const { nuevoEstado, motivoRechazo } = req.body;
-
-  if (!nuevoEstado || !['Validado', 'Rechazado'].includes(nuevoEstado)) {
-      return res.status(400).json({ error: 'Estado inválido.' });
-  }
-
-  try {
-    const result = await pool.query(
-      'UPDATE Documentos_RENADE SET estatus_validacion = $1, fecha_validacion = NOW() WHERE id = $2 RETURNING *',
-      [nuevoEstado, id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Solicitud RENADE no encontrada.' });
-    }
-    
-    const solicitudActualizada = result.rows[0];
-
-    // Lógica de notificación 
-    try {
-      let mensajeNotificacion = '';
-      if (nuevoEstado === 'Validado') {
-        mensajeNotificacion = '¡Buenas noticias! Tus documentos de RENADE han sido validados por un administrador.';
-      } else {
-        mensajeNotificacion = `Tu solicitud de RENADE fue rechazada. Motivo: ${motivoRechazo || 'Sin motivo'}`;
-      }
-
-      await fetch('http://localhost:4000/api/notificaciones', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id_usuario: solicitudActualizada.id_usuario,
-          mensaje: mensajeNotificacion
-        })
-      });
-
-    } catch (notificationError) {
-      console.error('Error al enviar la notificación:', notificationError.message);
-    }
-
-    res.json(solicitudActualizada);
-
-  } catch (error) {
-    console.error('Error al actualizar solicitud RENADE:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });

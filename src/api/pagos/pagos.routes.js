@@ -1,23 +1,8 @@
 const { Router } = require('express');
 const pool = require('../../db');
+const { sendEmail } = require('../../utils/emailSender'); // Importamos la utilidad
 
 const router = Router();
-
-const sendNotification = async (id_usuario, mensaje) => {
-  try {
-
-    await fetch('http://localhost:4000/api/notificaciones', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id_usuario, mensaje })
-    });
-    console.log(`[MS Pagos] Notificación enviada para usuario ${id_usuario}`);
-  } catch (err) {
-
-    console.error(`[MS Pagos] Error al intentar enviar notificación: ${err.message}`);
-  }
-};
-
 
 // --- OBTENER TODOS LOS PAGOS (GET /) ---
 router.get('/', async (req, res) => {
@@ -38,6 +23,7 @@ router.get('/', async (req, res) => {
 // --- AÑADIR UN NUEVO PAGO (POST /) ---
 router.post('/', async (req, res) => {
   const { id_usuario, monto, concepto, estatus_pago, fecha_vencimiento, tipo_pago } = req.body;
+  
   try {
     const result = await pool.query(
       `INSERT INTO Pagos (id_usuario, monto, concepto, estatus_pago, fecha_vencimiento, tipo_pago) 
@@ -47,12 +33,38 @@ router.post('/', async (req, res) => {
     
     const newPayment = result.rows[0];
 
-    // Si el admin registra un nuevo pago PENDIENTE, notifica al alumno.
+    // --- NOTIFICACIÓN DE NUEVO PAGO PENDIENTE ---
     if (newPayment.estatus_pago === 'Pendiente') {
-      await sendNotification(newPayment.id_usuario, 
-        `Se ha registrado un nuevo pago pendiente: ${newPayment.concepto} (Vence: ${new Date(newPayment.fecha_vencimiento).toLocaleDateString()}).`
-      );
+        try {
+            // 1. Buscamos el correo del usuario
+            const userRes = await pool.query('SELECT nombre, correo_electronico FROM Usuarios WHERE id = $1', [id_usuario]);
+            
+            if (userRes.rows.length > 0) {
+                const alumno = userRes.rows[0];
+                
+                const asunto = 'Nuevo Pago Asignado - Dojo Bunkai';
+                const mensajeHTML = `
+                    <div style="font-family: Arial; padding: 20px; border: 1px solid #f57c00; border-radius: 8px;">
+                        <h2 style="color: #ef6c00;">Nuevo Pago Registrado</h2>
+                        <p>Hola <b>${alumno.nombre}</b>,</p>
+                        <p>Se ha registrado un nuevo pago pendiente en tu cuenta:</p>
+                        <ul>
+                            <li><b>Concepto:</b> ${newPayment.concepto}</li>
+                            <li><b>Monto:</b> $${newPayment.monto}</li>
+                            <li><b>Fecha de Vencimiento:</b> ${new Date(newPayment.fecha_vencimiento).toLocaleDateString()}</li>
+                        </ul>
+                        <p>Por favor, realiza el pago antes de la fecha límite.</p>
+                    </div>
+                `;
+
+                // 2. Enviamos el correo
+                sendEmail(alumno.correo_electronico, asunto, mensajeHTML);
+            }
+        } catch (mailError) {
+            console.error("Error al enviar notificación de nuevo pago:", mailError);
+        }
     }
+    // ---------------------------------------------
 
     res.status(201).json(newPayment);
   } catch (error) {
@@ -71,10 +83,10 @@ router.put('/:id', async (req, res) => {
   }
 
   try {    
-
     let updateQuery = 'UPDATE Pagos SET estatus_pago = $1';
     const queryParams = [estatus_pago];
     
+    // Si se marca como pagado, actualizamos la fecha de pago a HOY
     if (estatus_pago === 'Pagado') {
       updateQuery += ', fecha_pago = NOW()';
     }
@@ -84,19 +96,47 @@ router.put('/:id', async (req, res) => {
 
     const result = await pool.query(updateQuery, queryParams);
 
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Pago no encontrado.' });
     }
     
     const updatedPayment = result.rows[0];
 
-
+    // --- NOTIFICACIÓN DE PAGO EXITOSO (RECIBO) ---
     if (updatedPayment.estatus_pago === 'Pagado') {
-      await sendNotification(updatedPayment.id_usuario, 
-        `¡Tu pago de "${updatedPayment.concepto}" ha sido confirmado! Gracias.`
-      );
+        try {
+            // 1. Buscamos el correo del usuario
+            const userRes = await pool.query('SELECT nombre, correo_electronico FROM Usuarios WHERE id = $1', [updatedPayment.id_usuario]);
+            
+            if (userRes.rows.length > 0) {
+                const alumno = userRes.rows[0];
+                
+                const asunto = 'Comprobante de Pago - Dojo Bunkai';
+                const mensajeHTML = `
+                    <div style="font-family: Arial; padding: 20px; border: 1px solid #2e7d32; border-radius: 8px;">
+                        <h2 style="color: #2e7d32;">Pago Confirmado ✅</h2>
+                        <p>Hola <b>${alumno.nombre}</b>, hemos recibido tu pago exitosamente.</p>
+                        <hr/>
+                        <p><b>Detalles del Pago:</b></p>
+                        <table style="width: 100%; text-align: left;">
+                            <tr><th>Concepto:</th><td>${updatedPayment.concepto}</td></tr>
+                            <tr><th>Monto:</th><td>$${updatedPayment.monto}</td></tr>
+                            <tr><th>Fecha de Pago:</th><td>${new Date().toLocaleDateString()}</td></tr>
+                            <tr><th>Tipo:</th><td>${updatedPayment.tipo_pago}</td></tr>
+                        </table>
+                        <hr/>
+                        <p>Gracias por tu cumplimiento.</p>
+                    </div>
+                `;
+
+                // 2. Enviamos el correo
+                sendEmail(alumno.correo_electronico, asunto, mensajeHTML);
+            }
+        } catch (mailError) {
+            console.error("Error al enviar recibo de pago:", mailError);
+        }
     }
+    // ---------------------------------------------
     
     res.json(updatedPayment);
   } catch (error) {
@@ -104,9 +144,9 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
 // --- ELIMINAR UN PAGO (DELETE /:id) ---
 router.delete('/:id', async (req, res) => {
-
   try {
     const result = await pool.query('DELETE FROM Pagos WHERE id = $1 RETURNING *', [id]);
     if (result.rowCount === 0) {

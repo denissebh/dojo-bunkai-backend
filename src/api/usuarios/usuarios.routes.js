@@ -2,6 +2,7 @@ const { Router } = require('express');
 const pool = require('../../db');
 const bcrypt = require('bcrypt');
 const checkAuth = require('../../middleware/checkAuth');
+const { sendEmail } = require('../../utils/emailSender');
 
 const router = Router();
 
@@ -46,6 +47,25 @@ router.post('/', async (req, res) => {
 
     const newUser = result.rows[0];
     delete newUser.password_hash;
+    // ---LÓGICA DE NOTIFICACIÓN DE PROFESOR ---
+    if (rol === 'Profesor') {
+      const asunto = 'Bienvenido al Equipo Docente - Dojo Bunkai';
+      const mensaje = `
+        <div style="font-family: Arial; color: #333;">
+          <h2 style="color: #D32F2F;">¡Bienvenido Sensei ${nombre}!</h2>
+          <p>Se ha creado tu cuenta de profesor en la plataforma.</p>
+          <p>Tus credenciales de acceso temporal son:</p>
+          <ul>
+            <li><b>Usuario/Correo:</b> ${correo_electronico}</li>
+            <li><b>Contraseña:</b> ${passwordToHash}</li>
+          </ul>
+          <p>Por favor, ingresa y cambia tu contraseña lo antes posible.</p>
+        </div>
+      `;
+      // Enviamos el correo sin esperar (para no alentar la respuesta)
+      sendEmail(correo_electronico, asunto, mensaje);
+    }
+    // ---------------------------------------------
     
     res.status(201).json(newUser);
 
