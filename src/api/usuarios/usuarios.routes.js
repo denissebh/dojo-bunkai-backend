@@ -8,12 +8,12 @@ const router = Router();
 
 // --- CREAR UN NUEVO USUARIO ---
 router.post('/', async (req, res) => {
-  
-
   const { 
     nombre, apellido_paterno, apellido_materno, correo_electronico, password, 
     rol, grado, edad, curp, telefono, fecha_nacimiento,
-    grupo_sanguineo, alergias 
+    grupo_sanguineo, alergias,
+    // NUEVOS CAMPOS:
+    nombre_tutor, telefono_tutor, parentesco_tutor 
   } = req.body;
   
   const passwordToHash = password || 'dojo2025'; 
@@ -22,11 +22,13 @@ router.post('/', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(passwordToHash, salt);
 
-    // 2. Actualizamos la consulta INSERT para incluir los nuevos campos
     const result = await pool.query(
       `INSERT INTO Usuarios 
-         (nombre, apellido_paterno, apellido_materno, correo_electronico, password_hash, rol, grado, edad, curp, telefono, fecha_nacimiento, grupo_sanguineo, alergias) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+         (nombre, apellido_paterno, apellido_materno, correo_electronico, password_hash, 
+          rol, grado, edad, curp, telefono, fecha_nacimiento, 
+          grupo_sanguineo, alergias,
+          nombre_tutor, telefono_tutor, parentesco_tutor) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) 
        RETURNING *`, 
       [
         nombre, 
@@ -34,14 +36,17 @@ router.post('/', async (req, res) => {
         apellido_materno, 
         correo_electronico, 
         password_hash, 
-        rol || 'Profesor', 
+        rol || 'Alumno',  // Por defecto es Alumno si no se especifica
         grado, 
         edad, 
         curp, 
         telefono, 
         fecha_nacimiento,
-        grupo_sanguineo, // $12
-        alergias         // $13
+        grupo_sanguineo, 
+        alergias,
+        nombre_tutor || null,     // $14
+        telefono_tutor || null,   // $15
+        parentesco_tutor || null  // $16
       ] 
     );
 

@@ -15,8 +15,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-
-
 // --- CREAR UN NUEVO EVENTO (POST /api/actividades) ---
 router.post('/', async (req, res) => {
   const { name, date, type, imageUrl } = req.body; 

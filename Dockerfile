@@ -5,7 +5,6 @@ FROM node:18-alpine
 WORKDIR /app
 
 # 3. Copiamos los archivos de definición de dependencias primero
-# (Esto es un truco para que la instalación sea más rápida si no cambian las librerías)
 COPY package*.json ./
 
 # 4. Instalamos las dependencias

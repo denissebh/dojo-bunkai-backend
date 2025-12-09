@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// --- PUBLICAR UN NUEVO COMUNICADO (POST /api/comunicados) ---
+// --- PUBLICAR UN NUEVO COMUNICADO (POST /api/comunicados/enviar) ---
 router.post('/enviar', checkAuth, async (req, res) => {
   const { asunto, mensaje, destinatarios } = req.body; 
 
@@ -50,8 +50,7 @@ router.post('/enviar', checkAuth, async (req, res) => {
         </div>
     `;
 
-    //  Enviamos usando la utilidad (en segundo plano para no bloquear)
-    // No usamos 'await' dentro del map para que sea más rápido, o usamos Promise.all
+    //  Enviamos usando la utilidad
     console.log(`Iniciando envío a ${usuarios.length} usuarios...`);
     
     usuarios.forEach(usuario => {
@@ -71,6 +70,47 @@ router.post('/enviar', checkAuth, async (req, res) => {
     console.error('Error comunicados:', error);
     res.status(500).json({ error: 'Error interno.' });
   }
+});
+
+// ---  CONTACTO PÚBLICO (POST /api/comunicados/contacto-publico) ---
+router.post('/contacto-publico', async (req, res) => {
+    const { nombre, correo, mensaje } = req.body;
+  
+    // Validación simple
+    if (!nombre || !correo || !mensaje) {
+      return res.status(400).json({ error: 'Por favor completa todos los campos.' });
+    }
+  
+    try {
+      // El destinatario serás tú (el administrador del sistema)
+      const destinatarioAdmin = process.env.EMAIL_USER; 
+      
+      const asuntoCorreo = `Nuevo Mensaje Web de: ${nombre}`;
+      
+      const contenidoHTML = `
+        <div style="font-family: Arial; padding: 20px; border: 1px solid #ccc; border-radius: 8px;">
+          <h2 style="color: #d32f2f;">📩 Nuevo Mensaje de Contacto</h2>
+          <p>Has recibido una consulta desde la página web de Dojo Bunkai.</p>
+          
+          <p><strong> Nombre:</strong> ${nombre}</p>
+          <p><strong> Correo de contacto:</strong> ${correo}</p>
+          <hr/>
+          <p><strong> Mensaje:</strong></p>
+          <blockquote style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #d32f2f;">
+            ${mensaje}
+          </blockquote>
+        </div>
+      `;
+  
+      // Usamos tu utilidad sendEmail existente
+      await sendEmail(destinatarioAdmin, asuntoCorreo, contenidoHTML);
+  
+      res.json({ msg: 'Mensaje enviado correctamente' });
+  
+    } catch (error) {
+      console.error('Error en contacto público:', error);
+      res.status(500).json({ error: 'Error al enviar el mensaje' });
+    }
 });
 
 module.exports = router;
